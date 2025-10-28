@@ -1,0 +1,272 @@
+---
+title: Create Docs from Invoices with Infofla
+description: Turn raw invoices into structured, publishable documentation using Infofla's extraction and templating workflow.
+
+---
+
+# Create Docs from Invoices with Infofla
+
+This guide shows how to convert vendor invoices (PDF/JPG/PNG) into structured data and human‑readable docs (Markdown/JSON/CSV) using Infofla. You’ll set up field extraction, validate results, and generate consistent documentation your team can publish or pipe into downstream systems.
+
+Reference: [Infofla website](https://www.infofla.com/en/home)
+
+---
+
+## Prerequisites
+
+- A set of representative sample invoices (at least 5–10, covering different vendors/layouts)
+- An Infofla account and access to a workspace/project
+- Decision on output format(s): Markdown for readable docs, JSON/CSV for data pipes
+
+---
+
+## 1) Define your target schema (fields you care about)
+
+Start by deciding the exact fields you want in your final docs. Keep names stable and explicit.
+
+```json
+{
+  "invoiceNumber": "INV-2024-0001",
+  "invoiceDate": "2024-06-30",
+  "supplier": {
+    "name": "Acme Ltd",
+    "address": "123 Market St, Springfield",
+    "vatId": "GB123456789"
+  },
+  "buyer": {
+    "name": "Your Company",
+    "address": "42 Startup Ave, London"
+  },
+  "currency": "USD",
+  "subtotal": 1999.5,
+  "tax": 399.9,
+  "total": 2399.4,
+  "dueDate": "2024-07-30",
+  "lineItems": [
+    {
+      "description": "Pro subscription (12 months)",
+      "qty": 1,
+      "unitPrice": 1999.5,
+      "lineTotal": 1999.5
+    }
+  ],
+  "notes": "Thanks for your business."
+}
+```
+
+Tip: Capture optional fields you might need later (e.g., purchaseOrder, paymentTerms, bankIban).
+
+---
+
+## 2) Create an Infofla project and upload samples
+
+1. Create a new project (e.g., “Invoice → Docs”).
+2. Upload a diverse set of invoices: different vendors, formats, and qualities.
+3. Group similar layouts if you expect multiple templates (e.g., Vendor A vs Vendor B).
+
+Goal: Give the extractor enough variety to learn anchors and patterns.
+
+---
+
+## 3) Configure extraction: anchors, patterns, tables
+
+Use a mix of anchors (labels like “Invoice #”, “Total”), regex patterns, and table detection for line items.
+
+```yaml
+fields:
+  invoiceNumber:
+    anchors: ["Invoice #", "Invoice No", "Invoice Number"]
+    regex: "[A-Z]{2,}-?\d{3,}"
+  invoiceDate:
+    anchors: ["Invoice Date", "Date"]
+    dateFormats: ["YYYY-MM-DD", "DD/MM/YYYY", "MMM D, YYYY"]
+  supplier.name:
+    anchors: ["From", "Supplier", "Vendor"]
+  total:
+    anchors: ["Total", "Amount Due"]
+    currency: true
+
+tables:
+  lineItems:
+    headerAnchors: ["Description", "Qty", "Unit Price", "Amount"]
+    columns:
+      - key: description
+        match: ["Description", "Item", "Service"]
+      - key: qty
+        match: ["Qty", "Quantity"]
+        number: true
+      - key: unitPrice
+        match: ["Unit Price", "Price"]
+        currency: true
+      - key: lineTotal
+        match: ["Amount", "Line Total"]
+        currency: true
+```
+
+Tips:
+- Add multiple synonyms for robustness.
+- Normalize currencies and dates.
+- For variable layouts, prefer multiple weak anchors over a single strict one.
+
+---
+
+## 4) Test and validate on samples
+
+Run extraction on your sample set and review field‑by‑field:
+
+- Spot‑check high‑impact fields: invoiceNumber, total, tax, dueDate
+- Confirm table parsing: row count, numeric totals, currency symbols
+- Add post‑processing rules (e.g., trim whitespace, uppercase VAT IDs)
+
+Iterate: adjust anchors/regex/date formats until accuracy is acceptable (≥99% on key totals).
+
+---
+
+## 5) Map data to a documentation template
+
+If you want human‑readable docs, design a Markdown template. Keep it deterministic and concise.
+
+```md
+---
+title: Invoice {{ invoiceNumber }}
+description: Invoice from {{ supplier.name }} on {{ invoiceDate }} totaling {{ total }} {{ currency }}
+tags:
+  - invoice
+  - {{ supplier.name }}
+---
+
+# Invoice {{ invoiceNumber }}
+
+- Date: {{ invoiceDate }}
+- Supplier: {{ supplier.name }}
+- Buyer: {{ buyer.name }}
+- Currency: {{ currency }}
+
+## Totals
+
+- Subtotal: {{ subtotal }}
+- Tax: {{ tax }}
+- Total: {{ total }}
+
+## Line Items
+
+| Description | Qty | Unit Price | Line Total |
+| ----------- | ---:| ----------:| ----------:|
+{{#each lineItems}}
+| {{ description }} | {{ qty }} | {{ unitPrice }} | {{ lineTotal }} |
+{{/each}}
+
+{{#if notes}}
+## Notes
+
+{{ notes }}
+{{/if}}
+```
+
+Notes:
+- Use a templating syntax supported by your Infofla setup (e.g., Handlebars‑style shown above).
+- Keep frontmatter minimal and machine‑readable.
+
+---
+
+## 6) Choose outputs and destinations
+
+Common outputs:
+
+- JSON: for pipeline ingestion (ETL, data warehouse)
+- CSV: for quick analysis/spreadsheets
+- Markdown: for readable docs in repos/wikis
+- Webhook/API: trigger downstream automations
+
+Decide destinations:
+- Git repository (docs as code)
+- Object storage (S3/GCS/Azure Blob)
+- Knowledge base or wiki
+- Finance tools (AP/ERP) via webhook
+
+---
+
+## 7) Run at scale and monitor quality
+
+- Batch process new invoices on a schedule or webhook
+- Track extraction accuracy on key fields (totals, dates, identifiers)
+- Add alerts when confidence drops or validations fail (e.g., subtotal + tax ≠ total)
+
+Example validation ideas:
+
+```yaml
+validations:
+  totals_balance: "abs((subtotal + tax) - total) < 0.01"
+  has_invoice_number: "invoiceNumber != ''"
+  has_at_least_one_item: "len(lineItems) > 0"
+```
+
+---
+
+## Example: From invoice to doc
+
+Input (snippet):
+
+```
+Acme Ltd
+Invoice # INV-2024-0001
+Invoice Date: 2024-06-30
+...
+Description         Qty   Unit Price   Amount
+Pro subscription     1      1999.50    1999.50
+Subtotal: 1999.50  Tax: 399.90  Total: 2399.40
+```
+
+Extracted JSON (key fields):
+
+```json
+{
+  "invoiceNumber": "INV-2024-0001",
+  "invoiceDate": "2024-06-30",
+  "supplier": { "name": "Acme Ltd" },
+  "currency": "USD",
+  "subtotal": 1999.5,
+  "tax": 399.9,
+  "total": 2399.4,
+  "lineItems": [
+    { "description": "Pro subscription", "qty": 1, "unitPrice": 1999.5, "lineTotal": 1999.5 }
+  ]
+}
+```
+
+Rendered Markdown (excerpt):
+
+```md
+# Invoice INV-2024-0001
+
+- Date: 2024-06-30
+- Supplier: Acme Ltd
+- Currency: USD
+
+## Totals
+
+- Subtotal: 1999.5
+- Tax: 399.9
+- Total: 2399.4
+```
+
+---
+
+## Troubleshooting
+
+- Numbers parse incorrectly: tighten currency/number regex and set locale.
+- Dates flip day/month: explicitly list accepted `dateFormats` and prefer ISO output.
+- Line items misaligned: add/rename header synonyms; increase header detection confidence.
+- Missing totals: add anchors for both “Total” and “Amount Due”; consider multi‑anchor matches.
+
+---
+
+## Next steps
+
+- Expand schema with purchase order, payment terms, and IBAN.
+- Add vendor‑specific templates for stubborn layouts.
+- Automate publishing to your docs site or repo.
+
+For platform details and updates, see the [Infofla website](https://www.infofla.com/en/home).
+
+
